@@ -78,6 +78,7 @@ final class GrainModel: ObservableObject {
     @Published var holdOriginal = false          // true only while the compare button is held down
     @Published var dropTargeted = false
     @Published var mutedEffect: String?
+    @Published var zoomed: Set<String> = []   // per-slider zoom state; not persisted, recomputed on launch
 
     /// Temporary comparisons affect the preview only; saved settings stay untouched.
     var previewSettings: GrainSettings {
@@ -145,6 +146,9 @@ final class GrainModel: ObservableObject {
         if let raw = defaults.string(forKey: Key.format), let saved = OutputFormat(rawValue: raw) { format = saved }
         actualSize = defaults.object(forKey: Key.actualSize) as? Bool ?? false
         writeSettingsFile = defaults.object(forKey: Key.settingsFile) as? Bool ?? false
+        // Auto-enable zoom for any slider whose current value is within its zoom range
+        // and whose zoom range has at least 6 distinct step positions.
+        zoomed = Set(Self.zoomSpecs.filter { canZoom(title: $0.title) }.map(\.title))
     }
 
     private func remember() {
@@ -154,6 +158,84 @@ final class GrainModel: ObservableObject {
         defaults.set(format.rawValue, forKey: Key.format)
         defaults.set(actualSize, forKey: Key.actualSize)
         defaults.set(writeSettingsFile, forKey: Key.settingsFile)
+    }
+
+    // MARK: Zoom (narrowed range for fine-tuning)
+
+    struct ZoomSpec {
+        let title: String
+        let range: ClosedRange<Double>
+        let step: Double
+        let defaultValue: Double
+        let keyPath: KeyPath<GrainSettings, Double>
+    }
+
+    /// The 12 sliders, in the same order as ControlsPanel. Single source of truth.
+    static let zoomSpecs: [ZoomSpec] = [
+        .init(title: "Strength",         range: 0...1,      step: 0.01, defaultValue: 0.2, keyPath: \.intensity),
+        .init(title: "Scale",            range: 1...100,    step: 1,    defaultValue: 10,  keyPath: \.scale),
+        .init(title: "Grain size",       range: 1...6,      step: 1,    defaultValue: 1,   keyPath: \.grainSize),
+        .init(title: "Brightness",       range: -1...1,     step: 0.01, defaultValue: 0,   keyPath: \.brightness),
+        .init(title: "Contrast",         range: -1...1,     step: 0.01, defaultValue: 0,   keyPath: \.contrast),
+        .init(title: "Shadows",          range: -1...1,     step: 0.01, defaultValue: 0,   keyPath: \.shadows),
+        .init(title: "Highlights",       range: -1...1,     step: 0.01, defaultValue: 0,   keyPath: \.highlights),
+        .init(title: "Warmth",           range: -100...100, step: 1,    defaultValue: 0,   keyPath: \.temperature),
+        .init(title: "Saturation",       range: 0...2,      step: 0.01, defaultValue: 1,   keyPath: \.saturation),
+        .init(title: "Vignette",         range: 0...1,      step: 0.01, defaultValue: 0,   keyPath: \.vignette),
+        .init(title: "Vignette feather", range: 0...1,      step: 0.01, defaultValue: 0.5, keyPath: \.vignetteFeather),
+        .init(title: "Halation",         range: 0...1,      step: 0.01, defaultValue: 0,   keyPath: \.halation),
+    ]
+
+    /// Computes the zoomed (narrowed) range for fine-tuning.
+    /// - default at center of range: new range = center ± (width / 2) / 3
+    /// - default off-center: new range = default ± (default − end) / 3 on each side
+    /// Result is snapped to step multiples and clamped to the original range.
+    static func zoomRange(range: ClosedRange<Double>, step: Double, defaultValue: Double)
+        -> ClosedRange<Double>
+    {
+        let lo = range.lowerBound, hi = range.upperBound
+        let center = (lo + hi) / 2
+        let isCenter = abs(defaultValue - center) < step / 2
+
+        let newLo: Double, newHi: Double
+        if isCenter {
+            let quarter = (hi - lo) / 6   // half-width ÷ 3
+            newLo = center - quarter
+            newHi = center + quarter
+        } else {
+            newLo = defaultValue + (lo - defaultValue) / 3
+            newHi = defaultValue + (hi - defaultValue) / 3
+        }
+        // Snap to step multiples, clamp to original range.
+        let sLo = (newLo / step).rounded() * step
+        let sHi = (newHi / step).rounded() * step
+        let clampedLo = max(sLo, lo)
+        let clampedHi = min(sHi, hi)
+        return clampedLo <= clampedHi ? clampedLo...clampedHi : range
+    }
+
+    /// Number of step positions in a range.
+    static func zoomStepCount(_ r: ClosedRange<Double>, step: Double) -> Int {
+        Int(round((r.upperBound - r.lowerBound) / step)) + 1
+    }
+
+    /// Whether zoom is available for a title: value in range AND step count ≥ 6.
+    func canZoom(title: String) -> Bool {
+        guard let spec = Self.zoomSpecs.first(where: { $0.title == title }) else { return false }
+        let r = Self.zoomRange(range: spec.range, step: spec.step, defaultValue: spec.defaultValue)
+        let s = settings  // resolve @Published to plain GrainSettings
+        let v = s[spec.keyPath]
+        return v >= r.lowerBound && v <= r.upperBound && Self.zoomStepCount(r, step: spec.step) >= 6
+    }
+
+    /// Toggles zoom for a title. Turns on only if the value is within the zoom range.
+    func toggleZoom(title: String) {
+        if zoomed.contains(title) {
+            zoomed.remove(title)
+        } else {
+            guard canZoom(title: title) else { return }
+            zoomed.insert(title)
+        }
     }
 
     // MARK: Opening
@@ -541,6 +623,14 @@ struct ParamRow: View {
     let help: String
 
     private var isDefault: Bool { abs(value - defaultValue) < step / 2 }
+    private var isZoomed: Bool { model.zoomed.contains(title) }
+    private var canZoom: Bool { model.canZoom(title: title) }
+
+    private var effectiveRange: ClosedRange<Double> {
+        isZoomed
+            ? GrainModel.zoomRange(range: range, step: step, defaultValue: defaultValue)
+            : range
+    }
 
     var body: some View {
         // No `step:` on the Slider itself: it would draw a row of tick marks under it.
@@ -549,6 +639,14 @@ struct ParamRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(title).font(.headline)
+                Button(action: { model.toggleZoom(title: title) }) {
+                    Text("zoom")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .font(.caption.bold())
+                .disabled(!canZoom)
+                .help(isZoomed ? "Zoom off" : "Zoom: fine-tune in a narrower range")
                 Spacer()
                 Text(String(format: format, value)).monospacedDigit().foregroundStyle(.secondary)
                 Button { } label: { Image(systemName: "eye.slash") }
@@ -564,7 +662,7 @@ struct ParamRow: View {
                     .opacity(isDefault ? 0.25 : 1)
                     .disabled(isDefault)
             }
-            Slider(value: snapped, in: range)
+            Slider(value: snapped, in: effectiveRange)
             Text(help).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }

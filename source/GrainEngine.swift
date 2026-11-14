@@ -40,6 +40,10 @@ struct GrainSettings: Equatable, Codable {
     var vignetteFeather: Double = 0.5 // 0 ... 1; 0.5 preserves the original vignette
     var halation: Double = 0         // 0 ... 1
 
+    subscript(_ keyPath: KeyPath<GrainSettings, Double>) -> Double {
+        self[keyPath: keyPath]
+    }
+
     init() {}
 
     // Settings saved by version 0.4 have no saturation field.

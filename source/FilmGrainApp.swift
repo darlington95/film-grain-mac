@@ -612,6 +612,28 @@ struct EffectHoldStyle: ButtonStyle {
     }
 }
 
+/// A compact toggle button that shows its on/off state visually.
+/// ON: accent-coloured border and faint background; OFF: thin grey border.
+struct ZoomToggleStyle: ButtonStyle {
+    let isOn: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.bold())
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isOn ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(isOn ? Color.accentColor : Color.secondary.opacity(0.3),
+                            lineWidth: isOn ? 1.5 : 1)
+            )
+            .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
 struct ParamRow: View {
     @EnvironmentObject var model: GrainModel
     let title: String
@@ -640,11 +662,10 @@ struct ParamRow: View {
             HStack {
                 Text(title).font(.headline)
                 Button(action: { model.toggleZoom(title: title) }) {
-                    Text("zoom")
+                    Label(isZoomed ? "zoom on" : "zoom",
+                          systemImage: isZoomed ? "magnifyingglass.circle.fill" : "magnifyingglass")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .font(.caption.bold())
+                .buttonStyle(ZoomToggleStyle(isOn: isZoomed))
                 .disabled(!canZoom)
                 .help(isZoomed ? "Zoom off" : "Zoom: fine-tune in a narrower range")
                 Spacer()

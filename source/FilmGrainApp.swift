@@ -188,7 +188,7 @@ final class GrainModel: ObservableObject {
 
     /// Computes the zoomed (narrowed) range for fine-tuning.
     /// - default at center of range: new range = center ± (width / 2) / 3
-    /// - default off-center: new range = default ± (default − end) / 3 on each side
+    /// - default off-center: new range = original min / 3 ... original max / 3
     /// Result is snapped to step multiples and clamped to the original range.
     static func zoomRange(range: ClosedRange<Double>, step: Double, defaultValue: Double)
         -> ClosedRange<Double>
@@ -203,8 +203,8 @@ final class GrainModel: ObservableObject {
             newLo = center - quarter
             newHi = center + quarter
         } else {
-            newLo = defaultValue + (lo - defaultValue) / 3
-            newHi = defaultValue + (hi - defaultValue) / 3
+            newLo = lo / 3
+            newHi = hi / 3
         }
         // Snap to step multiples, clamp to original range.
         let sLo = (newLo / step).rounded() * step

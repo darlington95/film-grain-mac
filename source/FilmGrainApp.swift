@@ -665,6 +665,10 @@ struct ParamRow: View {
             Slider(value: snapped, in: effectiveRange)
             Text(help).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
+        // If the value slides out of the zoom range, drop zoom automatically.
+        .onChange(of: value) { _, _ in
+            if isZoomed && !canZoom { model.zoomed.remove(title) }
+        }
     }
 }
 
